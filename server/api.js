@@ -32,7 +32,12 @@ export async function api(request, db) {
     if (!validDay(day)) return fail('Выберите дату в пределах ближайших 30 дней.')
     const hours = await sql('SELECT opening,closing FROM hours WHERE day = ?', day).first() ?? {opening:540,closing:1140}
     if (path === '/api/calendar') {
-      const {results} = await sql('SELECT * FROM bookings WHERE day = ? ORDER BY start', day).all()
+      const {results} = await sql(`
+        SELECT id,day,start,finish,service,name,car,status,
+          CASE WHEN plate IS NOT NULL THEN substr(plate,1,1) || '•••' || substr(plate,-2) END AS plate,
+          CASE WHEN phone IS NOT NULL THEN '+7 ••• ••• •• ' || substr(phone,-2) END AS phone
+        FROM bookings WHERE day = ? ORDER BY start
+      `, day).all()
       return reply({hours, bookings:results})
     }
     const service = services.find(item => item.id === url.searchParams.get('service'))
@@ -55,12 +60,16 @@ export async function api(request, db) {
 
   if (path === '/api/bookings' && request.method === 'POST') {
     const {day,start,service,name,car} = body
+    const plate = typeof body.plate === 'string' && body.plate.length <= 20 ? body.plate.toUpperCase().replace(/[\s-]/g,'') : ''
+    const phone = typeof body.phone === 'string' && body.phone.length <= 25 ? body.phone.replace(/[\s()+-]/g,'').replace(/^8(?=\d{10}$)/,'7') : ''
+    if (!/^[АВЕКМНОРСТУХABEKMHOPCTYX]\d{3}[АВЕКМНОРСТУХABEKMHOPCTYX]{2}\d{2,3}$/u.test(plate)) return fail('Укажите госномер в формате А123ВС 22.')
+    if (!/^7\d{10}$/.test(phone)) return fail('Укажите телефон в формате +7 900 000-00-00.')
     const selected = services.find(item => item.id === service)
     if (!validDay(day) || !aligned(start) || !future(day,start) || !selected || !label(name,60) || !label(car,60)) return fail('Проверьте дату, время и данные записи.')
     const id = crypto.randomUUID()
     const finish = start + selected.duration
-    const result = await sql(`INSERT INTO bookings SELECT ?,?,?,?,?,?,?,'pending' WHERE ${fits} AND ${noOverlap}`,
-      id,day,start,finish,service,name.trim(),car.trim(),start,day,finish,day,day,finish,start,id).run()
+    const result = await sql(`INSERT INTO bookings (id,day,start,finish,service,name,car,plate,phone,status) SELECT ?,?,?,?,?,?,?,?,?,'pending' WHERE ${fits} AND ${noOverlap}`,
+      id,day,start,finish,service,name.trim(),car.trim(),plate,phone,start,day,finish,day,day,finish,start,id).run()
     return result.meta.changes ? reply({id},201) : conflict()
   }
 

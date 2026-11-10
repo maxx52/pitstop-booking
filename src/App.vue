@@ -16,6 +16,8 @@ const service = ref(services[0])
 const start = ref(null)
 const name = ref('')
 const car = ref('')
+const plate = ref('')
+const phone = ref('')
 const slots = ref([])
 const error = ref('')
 const loading = ref(false)
@@ -94,7 +96,7 @@ async function submit() {
   if (saving.value || start.value === null) return
   saving.value = true
   error.value = ''
-  const selected = {day:day.value,start:start.value,service:service.value.id,name:name.value,car:car.value}
+  const selected = {day:day.value,start:start.value,service:service.value.id,name:name.value,car:car.value,plate:plate.value,phone:phone.value}
   try {
     const data = await request('bookings','POST',selected)
     receipt.value = {...selected,id:data.id}
@@ -144,6 +146,8 @@ function nextBooking() {
   receipt.value = null
   name.value = ''
   car.value = ''
+  plate.value = ''
+  phone.value = ''
   const chosen = service.value
   const chosenDay = day.value
   start.value = null
@@ -199,8 +203,11 @@ function nextBooking() {
         <div v-else class="slots"><button v-for="slot in slots" :key="slot" type="button" :aria-pressed="start===slot" @click="start=slot">{{ clock(slot) }}</button></div>
       </section>
       <section class="panel">
-        <div class="section-heading"><span>03</span><div><h2>Данные для записи</h2><p>Для демо можно указать вымышленные данные</p></div></div>
-        <div class="fields"><label>Имя<input v-model.trim="name" placeholder="Например, Алексей" required maxlength="60"></label><label>Автомобиль<input v-model.trim="car" placeholder="Например, Kia Rio" required maxlength="60"></label></div>
+        <div class="section-heading"><span>03</span><div><h2>Данные для записи</h2><p>Для демо используйте только вымышленные данные</p></div></div>
+        <div class="fields"><label>Имя<input v-model.trim="name" placeholder="Например, Алексей" required maxlength="60"></label><label>Автомобиль<input v-model.trim="car" placeholder="Например, Kia Rio" required maxlength="60"></label>
+          <label>Госномер<input v-model.trim="plate" placeholder="А123ВС 22" autocapitalize="characters" spellcheck="false" required maxlength="20"></label>
+          <label>Телефон<input v-model.trim="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="+7 900 000-00-00" required maxlength="25"></label>
+        </div>
       </section>
     </fieldset>
     <aside class="summary panel">
@@ -229,7 +236,7 @@ function nextBooking() {
           <div v-else-if="!bookings.length" class="empty"><Icon name="calendar" :size="27"/><strong>Записей пока нет</strong><p>Создайте заявку в клиентском режиме или выберите другую дату.</p><a href="/" class="subtle">Открыть онлайн-запись <Icon name="arrow" :size="16"/></a></div>
           <article class="booking" v-for="item in bookings" :key="item.id">
             <div class="booking-time"><strong>{{ clock(item.start) }}</strong><small>до {{ clock(item.finish) }}</small></div>
-            <div class="booking-detail"><strong>{{ byId(item.service)?.name }}</strong><span>{{ item.name }} · {{ item.car }}</span><span class="status" :class="item.status">{{ statuses[item.status] }}</span></div>
+            <div class="booking-detail"><strong>{{ byId(item.service)?.name }}</strong><span>{{ item.name }} · {{ item.car }}</span><span v-if="item.plate && item.phone">{{ item.plate }} · {{ item.phone }}</span><span class="status" :class="item.status">{{ statuses[item.status] }}</span></div>
             <div class="booking-actions" v-if="item.status!=='cancelled'">
               <button v-if="item.status==='pending'" class="secondary" :disabled="saving" @click="adminAction('bookings/'+item.id,'PATCH',{status:'confirmed'},'Запись подтверждена.')">Подтвердить</button>
               <button class="secondary" :disabled="saving" @click="openMove(item)">Перенести</button>

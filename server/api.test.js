@@ -12,7 +12,9 @@ test('booking lifecycle, overlaps, rescheduling and hours', async () => {
     const req = (path,method='GET',body) => api(new Request('https://pitstop.test/api/'+path,{
       method,...(body ? {body:JSON.stringify(body)} : {})
     }),db)
-    const sample = {day,start:600,service:'tires',name:'Демо',car:'Kia Rio'}
+    const sample = {day,start:600,service:'tires',name:'Демо',car:'Kia Rio',plate:'А123ВС 22',phone:'8 (900) 000-00-42'}
+    assert.equal((await req('bookings','POST',{...sample,phone:'123'})).status,400)
+    assert.equal((await req('bookings','POST',{...sample,plate:''})).status,400)
     const collision = await Promise.all([
       req('bookings','POST',sample),
       req('bookings','POST',{...sample,start:630}),
@@ -26,6 +28,8 @@ test('booking lifecycle, overlaps, rescheduling and hours', async () => {
     assert.equal(original.bookings.length,0)
     const target = await (await req('calendar?day='+tomorrow)).json()
     assert.equal(target.bookings[0].status,'confirmed')
+    assert.equal(target.bookings[0].plate,'А•••22')
+    assert.equal(target.bookings[0].phone,'+7 ••• ••• •• 42')
     const slots = async date => (await (await req('slots?day='+date+'&service=oil')).json()).slots
     assert.ok(!(await slots(tomorrow)).includes(690))
     assert.equal((await req('bookings/'+id,'PATCH',{status:'cancelled'})).status,200)
