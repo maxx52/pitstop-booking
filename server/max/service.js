@@ -17,7 +17,7 @@ export async function maxApi(token, path, body) {
   return result
 }
 
-export function store(path) {
+export function store(path, {adminUserId} = {}) {
   mkdirSync(dirname(path), {recursive: true, mode: 0o700})
   const db = new DatabaseSync(path)
   chmodSync(path, 0o600)
@@ -43,7 +43,14 @@ export function store(path) {
         db.prepare('INSERT INTO events(id) VALUES (?)').run(id)
         if (result) {
           db.prepare('INSERT INTO sessions VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET state=excluded.state').run(result.userId, JSON.stringify(result.state))
-          if (result.lead) db.prepare('INSERT INTO leads(event_id,user_id,data) VALUES (?,?,?)').run(id, result.userId, JSON.stringify(result.lead))
+          if (result.lead) {
+            const inserted = db.prepare('INSERT INTO leads(event_id,user_id,data) VALUES (?,?,?)').run(id, result.userId, JSON.stringify(result.lead))
+            if (adminUserId) {
+              const lead = result.lead
+              const text = `Новая заявка PitStop №${inserted.lastInsertRowid}\n\nАвтосервис: ${lead.service}\nГород: ${lead.city}\nПостов: ${lead.posts}\nПожелания: ${lead.wishes}\nКонтакт: ${lead.contact}`
+              db.prepare('INSERT INTO outbox(user_id,body) VALUES (?,?)').run(adminUserId, JSON.stringify({text}))
+            }
+          }
           db.prepare('INSERT INTO outbox(user_id,body) VALUES (?,?)').run(result.userId, JSON.stringify(result.reply))
         }
         db.exec('COMMIT')
@@ -55,17 +62,22 @@ export function store(path) {
   }
 }
 
-export function start({token, secret, database, port = 3174, send = maxApi}) {
+export function start({token, secret, database, port = 3174, send = maxApi, adminUserId}) {
   if (!token || !/^[a-zA-Z0-9_-]{16,256}$/.test(secret ?? '')) throw new Error('Set MAX_BOT_TOKEN and MAX_WEBHOOK_SECRET (16–256 characters)')
-  const storage = store(database)
+  if (adminUserId !== undefined && (!Number.isSafeInteger(adminUserId) || adminUserId <= 0)) throw new Error('Invalid MAX_ADMIN_USER_ID')
+  const storage = store(database, {adminUserId})
   let running = false
   async function deliver() {
     if (running) return
     running = true
     try {
       for (const row of storage.db.prepare('SELECT * FROM outbox WHERE sent=0 ORDER BY id LIMIT 100').all()) {
-        await send(token, `/messages?user_id=${row.user_id}`, JSON.parse(row.body))
-        storage.db.prepare('UPDATE outbox SET sent=1 WHERE id=?').run(row.id)
+        try {
+          await send(token, `/messages?user_id=${row.user_id}`, JSON.parse(row.body))
+          storage.db.prepare('UPDATE outbox SET sent=1 WHERE id=?').run(row.id)
+        } catch {
+          console.error(`MAX delivery failed for queued reply ${row.id}; will retry`)
+        }
       }
     } catch {
       console.error('MAX delivery failed; queued replies will be retried')
@@ -111,5 +123,6 @@ export function start({token, secret, database, port = 3174, send = maxApi}) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   start({token: process.env.MAX_BOT_TOKEN, secret: process.env.MAX_WEBHOOK_SECRET,
+    adminUserId: process.env.MAX_ADMIN_USER_ID ? Number(process.env.MAX_ADMIN_USER_ID) : undefined,
     database: process.env.MAX_BOT_DB || './private/max-bot.sqlite', port: Number(process.env.MAX_BOT_PORT || 3174)})
 }

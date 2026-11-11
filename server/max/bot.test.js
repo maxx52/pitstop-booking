@@ -10,7 +10,7 @@ const message = text => ({update_type: 'message_created', message: {sender: user
 const button = payload => ({update_type: 'message_callback', callback: {user, payload}})
 test('quote validation, duplicate delivery and persistence across restart', () => {
   const folder = mkdtempSync(join(tmpdir(), 'pitstop-max-'))
-  const storage = store(join(folder, 'bot.sqlite'))
+  const storage = store(join(folder, 'bot.sqlite'), {adminUserId: 999})
   try {
     storage.accept(button('quote_begin'))
     storage.accept(message('Тестовый сервис'))
@@ -23,6 +23,10 @@ test('quote validation, duplicate delivery and persistence across restart', () =
     storage.accept(message('test@example.com'))
     const leads = storage.db.prepare('SELECT * FROM leads').all()
     assert.equal(leads.length, 1)
+    const alerts = storage.db.prepare('SELECT body FROM outbox WHERE user_id=999').all()
+    assert.equal(alerts.length, 1)
+    assert.match(JSON.parse(alerts[0].body).text, /Новая заявка PitStop №1/)
+    assert.match(JSON.parse(alerts[0].body).text, /test@example.com/)
     assert.equal(JSON.parse(leads[0].data).city, 'Барнаул')
     assert.equal(JSON.parse(storage.db.prepare('SELECT state FROM sessions').get().state).step, null)
     storage.db.close()
