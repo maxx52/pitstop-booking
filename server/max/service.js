@@ -4,7 +4,8 @@ import { createServer } from 'node:http'
 import { mkdirSync, chmodSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { transition } from './bot.js'
+import { transition, menu } from './bot.js'
+import { adminAction, adminMenu, leadCard } from './admin.js'
 
 export const apiOrigin = 'https://platform-api2.max.ru'
 export async function maxApi(token, path, body) {
@@ -27,6 +28,9 @@ export function store(path, {adminUserId} = {}) {
     CREATE TABLE IF NOT EXISTS leads (id INTEGER PRIMARY KEY, event_id TEXT UNIQUE NOT NULL, user_id INTEGER NOT NULL, data TEXT NOT NULL, created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, body TEXT NOT NULL, sent INTEGER NOT NULL DEFAULT 0);
   `)
+  const columns = db.prepare('PRAGMA table_info(leads)').all()
+  if (!columns.some(column => column.name === 'status')) db.exec("ALTER TABLE leads ADD COLUMN status TEXT NOT NULL DEFAULT 'new'")
+  if (!columns.some(column => column.name === 'version')) db.exec('ALTER TABLE leads ADD COLUMN version INTEGER NOT NULL DEFAULT 0')
   return {
     db,
     accept(update) {
@@ -38,6 +42,13 @@ export function store(path, {adminUserId} = {}) {
           return
         }
         const userId = update.user?.user_id ?? update.callback?.user?.user_id ?? update.message?.sender?.user_id
+        const management = adminAction(db, update, adminUserId)
+        if (management) {
+          db.prepare('INSERT INTO events(id) VALUES (?)').run(id)
+          if (Number.isSafeInteger(userId)) db.prepare('INSERT INTO outbox(user_id,body) VALUES (?,?)').run(userId, JSON.stringify(management))
+          db.exec('COMMIT')
+          return
+        }
         const row = Number.isSafeInteger(userId) && db.prepare('SELECT state FROM sessions WHERE user_id=?').get(userId)
         const result = transition(update, row ? JSON.parse(row.state) : null)
         db.prepare('INSERT INTO events(id) VALUES (?)').run(id)
@@ -46,11 +57,11 @@ export function store(path, {adminUserId} = {}) {
           if (result.lead) {
             const inserted = db.prepare('INSERT INTO leads(event_id,user_id,data) VALUES (?,?,?)').run(id, result.userId, JSON.stringify(result.lead))
             if (adminUserId) {
-              const lead = result.lead
-              const text = `Новая заявка PitStop №${inserted.lastInsertRowid}\n\nАвтосервис: ${lead.service}\nГород: ${lead.city}\nПостов: ${lead.posts}\nПожелания: ${lead.wishes}\nКонтакт: ${lead.contact}`
-              db.prepare('INSERT INTO outbox(user_id,body) VALUES (?,?)').run(adminUserId, JSON.stringify({text}))
+              const lead = db.prepare('SELECT * FROM leads WHERE id=?').get(inserted.lastInsertRowid)
+              db.prepare('INSERT INTO outbox(user_id,body) VALUES (?,?)').run(adminUserId, JSON.stringify(leadCard(lead, 'Новая заявка PitStop')))
             }
           }
+          if (result.userId === adminUserId && result.reply.attachments === menu) result.reply.attachments = adminMenu(menu)
           db.prepare('INSERT INTO outbox(user_id,body) VALUES (?,?)').run(result.userId, JSON.stringify(result.reply))
         }
         db.exec('COMMIT')
