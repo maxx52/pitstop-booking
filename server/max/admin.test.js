@@ -44,6 +44,6 @@ test("owner menu has a single inline keyboard attachment", () => {
   const result = adminMenu(menu)
   assert.equal(result.length, 1)
   assert.equal(result[0].type, "inline_keyboard")
-  assert.equal(result[0].payload.buttons.length, 4)
-  assert.equal(menu[0].payload.buttons.length, 3)
+  assert.equal(result[0].payload.buttons.length, 5)
+  assert.equal(menu[0].payload.buttons.length, 4)
 })

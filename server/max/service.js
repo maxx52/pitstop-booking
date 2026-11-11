@@ -5,7 +5,7 @@ import { mkdirSync, chmodSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { transition, menu } from './bot.js'
-import { adminAction, adminMenu, leadCard } from './admin.js'
+import { adminAction, adminMenu, leadCard, sources } from './admin.js'
 
 export const apiOrigin = 'https://platform-api2.max.ru'
 export async function maxApi(token, path, body) {
@@ -23,6 +23,8 @@ export function store(path, {adminUserId} = {}) {
   const db = new DatabaseSync(path)
   chmodSync(path, 0o600)
   db.exec(`PRAGMA journal_mode=WAL;
+    CREATE TABLE IF NOT EXISTS operator_drafts (admin_id INTEGER PRIMARY KEY, id TEXT NOT NULL, lead_id INTEGER NOT NULL, body TEXT);
+    CREATE TABLE IF NOT EXISTS user_sources (user_id INTEGER PRIMARY KEY, source TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions (user_id INTEGER PRIMARY KEY, state TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, received TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS leads (id INTEGER PRIMARY KEY, event_id TEXT UNIQUE NOT NULL, user_id INTEGER NOT NULL, data TEXT NOT NULL, created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -31,6 +33,7 @@ export function store(path, {adminUserId} = {}) {
   const columns = db.prepare('PRAGMA table_info(leads)').all()
   if (!columns.some(column => column.name === 'status')) db.exec("ALTER TABLE leads ADD COLUMN status TEXT NOT NULL DEFAULT 'new'")
   if (!columns.some(column => column.name === 'version')) db.exec('ALTER TABLE leads ADD COLUMN version INTEGER NOT NULL DEFAULT 0')
+  if (!columns.some(column => column.name === 'source')) db.exec("ALTER TABLE leads ADD COLUMN source TEXT")
   return {
     db,
     accept(update) {
@@ -45,9 +48,14 @@ export function store(path, {adminUserId} = {}) {
         const management = adminAction(db, update, adminUserId)
         if (management) {
           db.prepare('INSERT INTO events(id) VALUES (?)').run(id)
-          if (Number.isSafeInteger(userId)) db.prepare('INSERT INTO outbox(user_id,body) VALUES (?,?)').run(userId, JSON.stringify(management))
+          const {outgoing, ...reply} = management
+          if (outgoing) db.prepare('INSERT INTO outbox(user_id,body) VALUES (?,?)').run(outgoing.userId, JSON.stringify(outgoing.reply))
+          if (Number.isSafeInteger(userId)) db.prepare('INSERT INTO outbox(user_id,body) VALUES (?,?)').run(userId, JSON.stringify(reply))
           db.exec('COMMIT')
           return
+        }
+        if (update.update_type === 'bot_started' && Number.isSafeInteger(userId) && !update.user?.is_bot && Object.hasOwn(sources, update.payload ?? '')) {
+          db.prepare('INSERT INTO user_sources VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET source=excluded.source').run(userId,update.payload)
         }
         const row = Number.isSafeInteger(userId) && db.prepare('SELECT state FROM sessions WHERE user_id=?').get(userId)
         const result = transition(update, row ? JSON.parse(row.state) : null)
@@ -55,7 +63,8 @@ export function store(path, {adminUserId} = {}) {
         if (result) {
           db.prepare('INSERT INTO sessions VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET state=excluded.state').run(result.userId, JSON.stringify(result.state))
           if (result.lead) {
-            const inserted = db.prepare('INSERT INTO leads(event_id,user_id,data) VALUES (?,?,?)').run(id, result.userId, JSON.stringify(result.lead))
+            const source = db.prepare('SELECT source FROM user_sources WHERE user_id=?').get(result.userId)?.source ?? null
+            const inserted = db.prepare('INSERT INTO leads(event_id,user_id,data,source) VALUES (?,?,?,?)').run(id, result.userId, JSON.stringify(result.lead),source)
             if (adminUserId) {
               const lead = db.prepare('SELECT * FROM leads WHERE id=?').get(inserted.lastInsertRowid)
               db.prepare('INSERT INTO outbox(user_id,body) VALUES (?,?)').run(adminUserId, JSON.stringify(leadCard(lead, 'Новая заявка PitStop')))
