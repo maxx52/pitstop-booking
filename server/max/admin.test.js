@@ -5,6 +5,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { store } from './service.js'
+import { adminMenu } from './admin.js'
+import { menu } from './bot.js'
 
 test('legacy leads migrate, private management, version checks, retries and pagination', () => {
   const folder = mkdtempSync(join(tmpdir(), 'max-admin-'))
@@ -36,4 +38,12 @@ test('legacy leads migrate, private management, version checks, retries and pagi
     app.accept(click('admin:status:1:1:connected'))
     assert.equal(app.db.prepare('SELECT status FROM leads WHERE id=1').get().status, 'connected')
   } finally { app.db.close(); rmSync(folder, {recursive:true,force:true}) }
+})
+
+test("owner menu has a single inline keyboard attachment", () => {
+  const result = adminMenu(menu)
+  assert.equal(result.length, 1)
+  assert.equal(result[0].type, "inline_keyboard")
+  assert.equal(result[0].payload.buttons.length, 4)
+  assert.equal(menu[0].payload.buttons.length, 3)
 })

@@ -1,7 +1,10 @@
 export const statuses = {new: 'Новая', working: 'В работе', contacted: 'Связался', connected: 'Подключён', rejected: 'Отказ'}
 const button = (text, payload) => ({type: 'callback', text, payload})
 const keyboard = buttons => [{type: 'inline_keyboard', payload: {buttons}}]
-export const adminMenu = menu => [...menu, ...keyboard([[button('Мои заявки', 'admin:list:0')]])]
+export const adminMenu = menu => keyboard([
+  ...menu[0].payload.buttons,
+  [button('Мои заявки', 'admin:list:0')]
+])
 
 export function leadCard(lead, heading = 'Заявка PitStop') {
   const data = JSON.parse(lead.data)
